@@ -1,0 +1,59 @@
+name: build
+
+# Builds every board on each push/PR to main, and on a version tag (v*) also publishes a
+# GitHub release with the firmware attached.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create releases on tag builds
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [div2]   # one entry per board in firmware/platformio.ini
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio esptool
+
+      - name: Build and merge (env:${{ matrix.env }})
+        run: tools/release_bin.sh ${{ matrix.env }} ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fud-deck-${{ matrix.env }}-${{ github.ref_name }}
+          path: dist/*.bin
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FUD-Deck ${{ github.ref_name }}
+          files: dist/*.bin
+          body: |
+            FUD-Deck: counter-surveillance firmware with a face. No attack modes or
+            broadcasts enabled by default.
+
+            **ESP32-DIV V2 hardware** (not related to the ESP32-DIV firmware):
+            - First install: `fud-deck-div2-<version>.bin` at offset `0x0`. This replaces the
+              stock firmware and clears saved settings. Back up first.
+            - Update a board already on FUD-Deck: `fud-deck-div2-<version>-app.bin` at `0x10000`.
+
+            Before connecting a battery, read the power safety page: the board has no
+            reverse-polarity protection. See the README for flashing steps.

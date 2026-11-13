@@ -1,0 +1,11 @@
+.pio/
+__pycache__/
+.DS_Store
+.vscode/
+firmware/tools/facepreview/facepreview
+firmware/tools/facepreview/faces.png
+firmware/tools/facevec/.venv/
+firmware/tools/facevec/out/
+firmware/tools/facevec/handoff/
+firmware/images/originals/
+dist/
