@@ -20,7 +20,7 @@
 using namespace theme;
 using widgets::ListView;
 
-#define FUD_VERSION "0.5b"
+#define FUD_VERSION "0.6b"
 
 static Preferences prefs;
 
@@ -753,8 +753,9 @@ static void menuDraw(bool full) {
     tft.setTextSize(1);
     tft.setTextColor(FG, BG);
     int pct = power::percent();
-    if (power::volts() > 0) snprintf(b, sizeof(b), "Battery %d%%  %.2fV%s", pct, power::volts(), power::charging() ? "  charging" : "");
-    else snprintf(b, sizeof(b), "Battery %d%%%s", pct, power::charging() ? "  charging" : "");
+    // The percent is a rough guess on this hardware, so it is marked with a tilde. See About.
+    if (power::volts() > 0) snprintf(b, sizeof(b), "Battery ~%d%%  %.2fV%s", pct, power::volts(), power::charging() ? "  charging" : "");
+    else snprintf(b, sizeof(b), "Battery ~%d%%%s", pct, power::charging() ? "  charging" : "");
     tft.drawString(b, 8, HEADER_H + 6);
     radioSummary(b, sizeof(b));
     tft.drawString(b, 8, HEADER_H + 18);
@@ -888,7 +889,7 @@ static int sleepIdx = 2;
 static void applySaver() { scanner::setSaver(saverOn); rfwatch::setSaver(saverOn); }
 
 // Rows are built per visit: only the ones that apply to this board show up.
-enum SetRow : uint8_t { R_BRIGHT, R_SLEEP, R_LEDS, R_ALERTS, R_MUTE, R_IGNORED, R_BATTERY, R_CLOCK, R_TOUCH, R_BUTTONS, R_SDLOG, R_POST, R_ABOUT };
+enum SetRow : uint8_t { R_BRIGHT, R_SLEEP, R_LEDS, R_ALERTS, R_MUTE, R_IGNORED, R_RADIOS, R_CLOCK, R_TOUCH, R_BUTTONS, R_SDLOG, R_POST, R_ABOUT };
 static uint8_t setRows[13];
 static int setN = 0;
 static ListView setLv;
@@ -901,7 +902,7 @@ static void setLabel(int i, char* b, size_t n, uint16_t*) {
     case R_ALERTS: snprintf(b, n, "Alerts  %s", det::alertFilterName(det::alertFilter())); break;
     case R_MUTE: snprintf(b, n, "Mute    %s", det::muted() ? "ON" : "OFF"); break;
     case R_IGNORED: snprintf(b, n, "Ignored %d  clr", det::ignoreCount()); break;
-    case R_BATTERY: snprintf(b, n, "Battery %s", saverOn ? "SAVER" : "FULL"); break;
+    case R_RADIOS: snprintf(b, n, "Radios  %s", saverOn ? "CYCLE" : "ALL"); break;
     case R_CLOCK: {
       char t[8];
       clk::formatTime(t, sizeof(t));
@@ -924,7 +925,7 @@ static void setEnter() {
   setRows[setN++] = R_ALERTS;
   if (post::buzzer()) setRows[setN++] = R_MUTE;   // hidden with no buzzer
   setRows[setN++] = R_IGNORED;
-  setRows[setN++] = R_BATTERY;
+  setRows[setN++] = R_RADIOS;
   setRows[setN++] = R_CLOCK;
   setRows[setN++] = R_TOUCH;
   setRows[setN++] = R_BUTTONS;
@@ -964,11 +965,11 @@ static void setChange(int i, int dir) {
     case R_ALERTS: det::setAlertFilter(det::alertFilter() + (dir > 0 ? 1 : 2)); break;
     case R_MUTE: det::setMuted(!det::muted()); break;
     case R_IGNORED: if (dir > 0) { det::clearIgnores(); ui::notify("ignore list cleared"); } break;
-    case R_BATTERY:
+    case R_RADIOS:
       saverOn = !saverOn;
       prefs.putBool("saver", saverOn);
       applySaver();
-      ui::notify(saverOn ? "saver: radios take turns" : "full: all radios at once");
+      ui::notify(saverOn ? "cycle: radios take turns, lighter draw" : "all radios listen at once");
       break;
     case R_SDLOG:
       sdlog::setEnabled(!sdlog::enabled());
@@ -1338,10 +1339,150 @@ static void aboutDraw(bool full) {
               "own radios; FUD adds more. Some camera signatures come from its research.\n"
               "Libraries: LovyanGFX, NimBLE-Arduino, IRremoteESP8266.\n\n"
               "Board notes: the third nRF24 is wired to the IR LED driver on V2 boards and cannot "
-              "receive, so FUD-Deck uses two. POST checks this on every boot.",
+              "receive, so FUD-Deck uses two. POST checks this on every boot.\n\n"
+              "Battery: this board has no real fuel gauge, so the percent is a rough guess. Trust "
+              "only the two marks in the corner: a bolt (charging) and LOW (nearly empty).",
               8, HEADER_H + 12, W - 16, FG);
   widgets::footer("hold LEFT or tap BACK");
 }
+
+// About's hidden tap. Tap the body five times, each within 1.5 s of the last, to open a toy
+// keypad. Rolling window, so it does not matter how long the whole run takes, only that you
+// keep tapping. Nothing beyond it does anything but talk back: no radio, no TX, no capability.
+static int eggTaps = 0;
+static uint32_t eggLast = 0;
+static void aboutTap(int x, int y) {
+  (void)x;
+  if (y <= HEADER_H) return;                   // anywhere on the body, not the header/BACK
+  uint32_t now = millis();
+  eggTaps = (now - eggLast <= 1500) ? eggTaps + 1 : 1;   // chain taps, or start a new run
+  eggLast = now;
+  sio::out("[egg] tap %d/5", eggTaps);
+  if (eggTaps >= 5) { eggTaps = 0; ui::go(ScreenId::Pin); }
+}
+
+// ---------------------------------------------------------------- PIN pad (easter egg gate)
+
+// A toy lock. It guards a wall of jokes and nothing else, so the code sits in plain sight.
+static const char* EGG_PIN = "1982";   // Flynn's Arcade. Flavor only, guards jokes.
+static char pinBuf[5];
+static int pinLen = 0;
+struct KBox { int16_t x, y, w, h; const char* label; };
+static KBox pinKeys[12];
+static void pinLayout() {
+  static const char* labs[12] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "<", "0", "OK"};
+  const int cols = 3, x0 = 11, y0 = HEADER_H + 54, gw = 68, gh = 48, gap = 7;
+  for (int i = 0; i < 12; i++) {
+    int r = i / cols, c = i % cols;
+    pinKeys[i] = {(int16_t)(x0 + c * (gw + gap)), (int16_t)(y0 + r * (gh + gap)),
+                  (int16_t)gw, (int16_t)gh, labs[i]};
+  }
+}
+static void pinShowDots() {
+  tft.fillRect(0, HEADER_H + 6, W, 40, BG);
+  tft.setTextDatum(textdatum_t::middle_center);
+  tft.setTextSize(3);
+  tft.setTextColor(FG, BG);
+  char d[16] = "";
+  for (int i = 0; i < 4; i++) strcat(d, i < pinLen ? "* " : "_ ");
+  tft.drawString(d, W / 2, HEADER_H + 26);
+  tft.setTextDatum(textdatum_t::top_left);
+}
+static void pinEnter() { pinLen = 0; pinBuf[0] = 0; pinLayout(); }
+static void pinDraw(bool full) {
+  if (full) {
+    tft.fillScreen(BG);
+    widgets::header("ENTER PIN", true);
+    tft.setTextSize(2);
+    for (int i = 0; i < 12; i++) {
+      KBox& k = pinKeys[i];
+      tft.drawRoundRect(k.x, k.y, k.w, k.h, 6, FG);
+      tft.setTextColor(FG, BG);
+      tft.setTextDatum(textdatum_t::middle_center);
+      tft.drawString(k.label, k.x + k.w / 2, k.y + k.h / 2);
+      tft.setTextDatum(textdatum_t::top_left);
+    }
+    widgets::footer("a little bird told you about this");
+  }
+  pinShowDots();
+}
+static void pinSubmit() {
+  if (!strcmp(pinBuf, EGG_PIN)) ui::go(ScreenId::Prank);
+  else {
+    ui::notify("nope. Zuse saw that.");
+    pinLen = 0;
+    pinBuf[0] = 0;
+    pinShowDots();
+  }
+}
+static void pinPress(int i) {
+  const char* l = pinKeys[i].label;
+  if (!strcmp(l, "<")) { if (pinLen) pinBuf[--pinLen] = 0; pinShowDots(); return; }
+  if (!strcmp(l, "OK")) { pinSubmit(); return; }
+  if (pinLen < 4) {
+    pinBuf[pinLen++] = l[0];
+    pinBuf[pinLen] = 0;
+    pinShowDots();
+    if (pinLen == 4) pinSubmit();
+  }
+}
+static void pinTap(int x, int y) {
+  for (int i = 0; i < 12; i++) {
+    KBox& k = pinKeys[i];
+    if (x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h) { pinPress(i); return; }
+  }
+}
+
+// ---------------------------------------------------------------- Prank list (hidden "apps")
+
+// Every one of these is a dead end that mouths off. No radio path, no capability, no TX.
+// The joke is the let-down: FUD listens, it does not attack, and it will tell you so.
+struct Prank { const char* name; const char* face; const char* line; };
+static const Prank PRANKS[] = {
+  {"Deauth-o-matic", "tongueface",   "Ha. No. FUD only listens. Put the keyboard down, hacker."},
+  {"WiFi Jammer",    "redface",      "We DETECT jammers. We do not BE jammers. Big difference."},
+  {"Evil Twin AP",   "winkingface",  "The only evil twin here is you before coffee."},
+  {"Flipper Clone",  "grinningface", "Already flipped. It was you. You got flipped."},
+  {"Sub-GHz Replay", "swirly-face",  "Press it again. Nothing will happen again. Soothing, right?"},
+  {"Mind Reader",    "shockedface",  "You are thinking about snacks. Everyone always is."},
+  {"Hack the Gibson","tongueface",   "It is 1995 somewhere. Not here. Not for you."},
+  {"Self Destruct",  "sadface",      "Boom. ...Nah. Zuse enjoys existing, thanks."},
+  {"Make Coffee",    "neutralface",  "I am a radio canary, not a barista. Steep your own."},
+};
+static const int PRANKS_N = sizeof(PRANKS) / sizeof(PRANKS[0]);
+static ListView prankLv;
+static int prankSel = 0;
+static void prankLabel(int i, char* b, size_t n, uint16_t*) { snprintf(b, n, "%s", PRANKS[i].name); }
+static void prankEnter() { prankLv.label = prankLabel; prankLv.y0 = HEADER_H + 6; prankLv.rows = 8; }
+static void prankDraw(bool full) {
+  if (full) { tft.fillScreen(BG); widgets::header("SECRET APPS", true); widgets::footer("every one a winner"); }
+  widgets::listDraw(prankLv, PRANKS_N, full);
+}
+static void prankOpen(int i) { prankSel = i; ui::go(ScreenId::PrankHit); }
+static void prankKey(Key k) {
+  if (k == Key::Up) { widgets::listMove(prankLv, PRANKS_N, -1); ui::dirty(); }
+  else if (k == Key::Down) { widgets::listMove(prankLv, PRANKS_N, 1); ui::dirty(); }
+  else if (k == Key::Center || k == Key::Right) prankOpen(prankLv.sel);
+}
+static void prankTap(int x, int y) {
+  int i = widgets::listHit(prankLv, PRANKS_N, x, y);
+  if (i >= 0) { prankLv.sel = i; widgets::listDraw(prankLv, PRANKS_N, false); prankOpen(i); }
+}
+
+// ---------------------------------------------------------------- Prank payload (Zuse + sass)
+
+static void phDraw(bool full) {
+  if (!full) return;
+  const Prank& p = PRANKS[prankSel];
+  tft.fillScreen(BG);
+  widgets::header(p.name, true);
+  const int fs = 120, fx = (W - fs) / 2, fy = HEADER_H + 10;
+  face::draw(p.face, fx, fy, fs, BG);
+  drawWrapped(p.line, 10, fy + fs + 12, W - 20, FG);
+  widgets::footer("tap or BACK. Try another.");
+}
+static void phKey(Key k) { if (k == Key::Center || k == Key::Left || k == Key::Right) ui::back(); }
+static void phTap(int, int y) { if (y > HEADER_H) ui::back(); }
 
 // ---------------------------------------------------------------- table
 
@@ -1384,8 +1525,11 @@ const Screen SCREENS[] = {
   {"settings", setEnter, setDraw, setKey, setTap, nullptr},
   {"setclock", ckEnter, ckDraw, ckKey, ckTap, nullptr},
   {"post", nullptr, postDraw, postKey, nullptr, nullptr},
-  {"about", nullptr, aboutDraw, nullptr, nullptr, nullptr},
+  {"about", nullptr, aboutDraw, nullptr, aboutTap, nullptr},
   {"touchcal", tcEnter, tcDraw, tcKey, tcTap, tcTick, tcLeave},
   {"buttons", btEnter, btDraw, nullptr, nullptr, btTick},
+  {"pin", pinEnter, pinDraw, nullptr, pinTap, nullptr},
+  {"prank", prankEnter, prankDraw, prankKey, prankTap, nullptr},
+  {"prankhit", nullptr, phDraw, phKey, phTap, nullptr},
 };
 static_assert(sizeof(SCREENS) / sizeof(SCREENS[0]) == (int)ScreenId::COUNT, "screen table out of sync");

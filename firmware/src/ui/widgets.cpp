@@ -7,20 +7,23 @@ namespace widgets {
 
 static const int BACK_W = 64;
 
-// Battery corner. On USB the icon turns green with a white bolt: percent while charging,
-// FULL once the charger says it is done.
+// Battery corner. The gauge on this hardware is rough and not trustworthy, so we do not
+// pretend to a precise percent. We show only the two states the board reads reliably: a
+// green bolt for CHG/FULL, and a red LOW mark near empty. In between, a dim "~" says the
+// level is approximate. See the note in Settings > About.
 void headerBattery() {
   const int x = W - 62, y = 6;
   tft.fillRect(x - 2, 0, W - x + 2, HEADER_H - 1, BG);
   int pct = power::percent();
   bool usb = power::usb();
   bool chg = power::charging();
-  uint16_t c = usb ? GOOD : (pct >= 0 && pct < 15) ? ALERT : FG;
+  bool low = !usb && pct >= 0 && pct < 20;
+  // Green on USB (reliable), red when low (reliable), dim otherwise (do not trust the number).
+  uint16_t c = usb ? GOOD : low ? ALERT : DIM;
   tft.drawRect(x, y, 24, 14, c);
   tft.fillRect(x + 24, y + 4, 3, 6, c);
-  int fill = usb && !chg ? 100 : pct;
-  if (fill > 0) tft.fillRect(x + 2, y + 2, (20 * fill) / 100, 10, c);
   if (usb) {
+    tft.fillRect(x + 2, y + 2, 20, 10, c);   // solid while on external power
     // bolt: upper and lower halves, outlined in black so it shows on any fill
     const int bx = x + 12, by = y + 7;
     for (int o = 0; o < 2; o++) {
@@ -29,15 +32,18 @@ void headerBattery() {
       tft.fillTriangle(bx + 2 + g, by - 7 - g, bx - 4 - g, by + 1 + g, bx + 1 + g, by + 1 + g, bc);
       tft.fillTriangle(bx - 1 - g, by - 1 - g, bx + 4 + g, by - 1 - g, bx - 2 - g, by + 7 + g, bc);
     }
+  } else if (low) {
+    // exclamation inside the icon: the one reading worth trusting on battery
+    tft.fillRect(x + 11, y + 3, 3, 5, c);
+    tft.fillRect(x + 11, y + 9, 3, 2, c);
+  } else {
+    tft.fillRect(x + 4, y + 6, 16, 2, c);    // a dash: present, level approximate
   }
   tft.setTextSize(1);
   tft.setTextColor(c, BG);
   tft.setTextDatum(textdatum_t::middle_left);
-  char b[8];
-  if (usb && !chg) snprintf(b, sizeof(b), "FULL");
-  else if (pct < 0) snprintf(b, sizeof(b), "--");
-  else snprintf(b, sizeof(b), "%d%%", pct);
-  tft.drawString(b, x + 30, y + 7);
+  const char* t = usb ? (chg ? "CHG" : "FULL") : low ? "LOW" : "~";
+  tft.drawString(t, x + 30, y + 7);
   tft.setTextDatum(textdatum_t::top_left);
 }
 
@@ -125,12 +131,26 @@ static void drawRow(ListView& lv, int n, int i) {
   if (lv.label) lv.label(i, buf, sizeof(buf), &color);
   uint16_t bg = sel ? color : BG, fg = sel ? BG : color;
   tft.fillRect(0, y, W, lv.rowH, BG);
-  tft.fillRoundRect(3, y + 2, W - 6, lv.rowH - 4, 4, bg);
+  tft.fillRoundRect(3, y + 2, W - 14, lv.rowH - 4, 4, bg);   // W-14 leaves a lane for the scrollbar
   tft.setTextSize(2);
   tft.setTextColor(fg, bg);
   tft.setTextDatum(textdatum_t::middle_left);
   tft.drawString(buf, 10, y + lv.rowH / 2);
   tft.setTextDatum(textdatum_t::top_left);
+}
+
+// A visible scrollbar in the right-hand lane: a track the height of the list and a thumb
+// sized and placed by how far down the list we are. Drawn after the rows so a row repaint
+// never leaves a stale thumb behind. No bar when the whole list fits.
+static void drawScrollbar(ListView& lv, int n) {
+  const int w = 5, x = W - w - 2;
+  const int y0 = lv.y0, h = lv.rows * lv.rowH;
+  tft.fillRect(W - 9, y0, 9, h, BG);                 // clear the lane (old thumb included)
+  if (n <= lv.rows) return;
+  tft.drawRoundRect(x, y0, w, h, 2, DIM);            // track
+  int thumbH = max(16, h * lv.rows / n);
+  int thumbY = y0 + (h - thumbH) * lv.top / (n - lv.rows);
+  tft.fillRoundRect(x, thumbY, w, thumbH, 2, FG);    // thumb
 }
 
 void listDraw(ListView& lv, int n, bool full) {
@@ -139,17 +159,11 @@ void listDraw(ListView& lv, int n, bool full) {
   if (lv.sel >= lv.top + lv.rows) lv.top = lv.sel - lv.rows + 1;
   if (full || lv.top != lv.lastTop) {
     for (int r = 0; r < lv.rows; r++) drawRow(lv, n, lv.top + r);
-    // scroll hints
-    tft.fillRect(W - 10, lv.y0, 10, lv.rows * lv.rowH, BG);
-    if (lv.top > 0) tft.fillTriangle(W - 9, lv.y0 + 8, W - 1, lv.y0 + 8, W - 5, lv.y0 + 2, DIM);
-    if (lv.top + lv.rows < n) {
-      int yb = lv.y0 + lv.rows * lv.rowH;
-      tft.fillTriangle(W - 9, yb - 8, W - 1, yb - 8, W - 5, yb - 2, DIM);
-    }
   } else if (lv.sel != lv.lastSel) {
     drawRow(lv, n, lv.lastSel);
     drawRow(lv, n, lv.sel);
   }
+  drawScrollbar(lv, n);
   lv.lastSel = lv.sel;
   lv.lastTop = lv.top;
 }
