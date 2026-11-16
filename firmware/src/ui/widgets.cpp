@@ -176,7 +176,10 @@ void listDraw(ListView& lv, int n, bool full) {
 
 void listMove(ListView& lv, int n, int delta) {
   if (n <= 0) return;
-  lv.sel = (lv.sel + delta + n) % n;  // wraps, like FUD
+  // Clamp at the ends, do not wrap. A swipe scrolls a page by replaying this, so wrapping let
+  // a swipe near the bottom blow past the last row (About) and land back near the top.
+  int s = lv.sel + delta;
+  lv.sel = s < 0 ? 0 : s >= n ? n - 1 : s;
 }
 
 int listHit(ListView& lv, int n, int x, int y) {
