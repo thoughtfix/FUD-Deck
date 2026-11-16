@@ -117,6 +117,12 @@ int drawWrapped(const char* s, int x, int y, int w, uint16_t color, uint16_t bg)
 
 void clearBody() { tft.fillRect(0, HEADER_H, W, FOOTER_Y - 2 - HEADER_H, BG); }
 
+// Scrollbar geometry, shared by the row, the bar, and the hit test so they always agree.
+// SB_RAIL is the right strip reserved for the bar: rows stop short of it and a tap inside it
+// scrolls instead of selecting a row. SB_W is the visible bar, wide enough to aim at.
+static const int SB_RAIL = 26;
+static const int SB_W = 10;
+
 static void drawRow(ListView& lv, int n, int i) {
   int r = i - lv.top;
   if (r < 0 || r >= lv.rows) return;
@@ -131,7 +137,7 @@ static void drawRow(ListView& lv, int n, int i) {
   if (lv.label) lv.label(i, buf, sizeof(buf), &color);
   uint16_t bg = sel ? color : BG, fg = sel ? BG : color;
   tft.fillRect(0, y, W, lv.rowH, BG);
-  tft.fillRoundRect(3, y + 2, W - 14, lv.rowH - 4, 4, bg);   // W-14 leaves a lane for the scrollbar
+  tft.fillRoundRect(3, y + 2, W - 3 - SB_RAIL, lv.rowH - 4, 4, bg);   // stops short of the scrollbar rail
   tft.setTextSize(2);
   tft.setTextColor(fg, bg);
   tft.setTextDatum(textdatum_t::middle_left);
@@ -143,14 +149,14 @@ static void drawRow(ListView& lv, int n, int i) {
 // sized and placed by how far down the list we are. Drawn after the rows so a row repaint
 // never leaves a stale thumb behind. No bar when the whole list fits.
 static void drawScrollbar(ListView& lv, int n) {
-  const int w = 5, x = W - w - 2;
+  const int w = SB_W, x = W - w - 3;
   const int y0 = lv.y0, h = lv.rows * lv.rowH;
-  tft.fillRect(W - 9, y0, 9, h, BG);                 // clear the lane (old thumb included)
+  tft.fillRect(W - SB_RAIL, y0, SB_RAIL, h, BG);     // clear the whole rail (old thumb included)
   if (n <= lv.rows) return;
-  tft.drawRoundRect(x, y0, w, h, 2, DIM);            // track
-  int thumbH = max(16, h * lv.rows / n);
+  tft.drawRoundRect(x, y0, w, h, 3, DIM);            // track
+  int thumbH = max(18, h * lv.rows / n);
   int thumbY = y0 + (h - thumbH) * lv.top / (n - lv.rows);
-  tft.fillRoundRect(x, thumbY, w, thumbH, 2, FG);    // thumb
+  tft.fillRoundRect(x, thumbY, w, thumbH, 3, FG);    // thumb
 }
 
 void listDraw(ListView& lv, int n, bool full) {
@@ -170,22 +176,25 @@ void listDraw(ListView& lv, int n, bool full) {
 
 void listMove(ListView& lv, int n, int delta) {
   if (n <= 0) return;
-  lv.sel = (lv.sel + delta + n) % n;  // wraps, like FUD
+  // Clamp at the ends, do not wrap. A swipe scrolls a page by replaying this, so wrapping let
+  // a swipe near the bottom blow past the last row (About) and land back near the top.
+  int s = lv.sel + delta;
+  lv.sel = s < 0 ? 0 : s >= n ? n - 1 : s;
 }
 
 int listHit(ListView& lv, int n, int x, int y) {
   int h = lv.rows * lv.rowH;
   if (y < lv.y0 || y >= lv.y0 + h) return -1;
-  // Tap in the scrollbar lane: jump the list so this point maps to that spot in it, bottom
-  // of the bar = bottom of the list. It scrolls, it does not pick a row. Returns -1.
-  if (n > lv.rows && x >= W - 14) {
-    int maxTop = n - lv.rows;
-    int top = (y - lv.y0) * maxTop / (h - 1);
-    if (top < 0) top = 0;
-    if (top > maxTop) top = maxTop;
-    lv.top = top;
-    lv.sel = top;
-    listDraw(lv, n, true);
+  // Tap in the scrollbar rail: page the list, up or down. This LCD can't do a precise drag
+  // or a pixel-accurate jump, so a tap below the thumb pages down and a tap above it pages up.
+  // It scrolls, it does not pick a row. Returns -1.
+  if (n > lv.rows && x >= W - SB_RAIL) {
+    int thumbH = max(18, h * lv.rows / n);
+    int thumbY = lv.y0 + (h - thumbH) * lv.top / (n - lv.rows);
+    int page = lv.rows - 1 > 0 ? lv.rows - 1 : 1;
+    int s = lv.sel + (y < thumbY + thumbH / 2 ? -page : page);
+    lv.sel = s < 0 ? 0 : s >= n ? n - 1 : s;
+    listDraw(lv, n, false);
     return -1;
   }
   int r = (y - lv.y0) / lv.rowH;

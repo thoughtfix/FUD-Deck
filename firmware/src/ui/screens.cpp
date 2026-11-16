@@ -1145,6 +1145,9 @@ static bool tcKept = false;
 static uint32_t tcTestUntil = 0;
 static const char* tcMsg = nullptr;   // shown instead of the step text after a failed try
 static const Box TC_KEEP = {10, 250, 105, 44}, TC_REDO = {125, 250, 105, 44};
+// A touch Cancel for the crosshair steps, clear of the corner targets. Backs out, keeps the
+// old calibration. The physical hold-LEFT still cancels too, for when touch is far off.
+static const Box TC_CANCEL = {70, 200, 100, 40};
 
 static void tcCross(int x, int y, uint16_t c) {
   tft.drawFastHLine(x - 12, y, 25, c);
@@ -1189,7 +1192,9 @@ static void tcDraw(bool full) {
     tcCross(TC_PX[tcStep], TC_PY[tcStep], FG);
     char a[24];
     snprintf(a, sizeof(a), "Tap the + (%d/4)", tcStep + 1);
-    tcCenter(tcMsg && tcStep == 0 ? tcMsg : a, "hold LEFT = cancel   RIGHT = default", tcMsg && tcStep == 0 ? WARN : FG);
+    tcCenter(tcMsg && tcStep == 0 ? tcMsg : a, "CANCEL or hold LEFT   RIGHT = default", tcMsg && tcStep == 0 ? WARN : FG);
+    tft.setTextSize(2);
+    ckButton(TC_CANCEL, "CANCEL", false);
   } else {
     tcCenter("Tap around to test", "dots should land under your finger", FG);
     tft.setTextSize(2);
@@ -1237,8 +1242,14 @@ static void tcFinish() {
   tcTestUntil = millis() + 20000;
   ui::redraw();
 }
+static void tcCancel() {
+  input::setTouchCal(tcOld, false);   // tcLeave also restores, but make it immediate
+  ui::back();
+  ui::notify("calibration canceled");
+}
 static void tcTap(int x, int y) {
   if (tcStep < 4) {
+    if (inBox(TC_CANCEL, x, y)) { tcCancel(); return; }
     int32_t rx, ry;
     if (!input::lastRaw(rx, ry)) return;
     tcRawX[tcStep] = rx;
