@@ -34,10 +34,15 @@ jobs:
       - name: Build and merge (env:${{ matrix.env }})
         run: tools/release_bin.sh ${{ matrix.env }} ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
 
+      # github.ref_name is "1/merge" on a PR, and a slash is illegal in an artifact name.
+      - name: Safe ref for artifact name
+        id: ref
+        run: echo "name=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fud-deck-${{ matrix.env }}-${{ github.ref_name }}
+          name: fud-deck-${{ matrix.env }}-${{ steps.ref.outputs.name }}
           path: dist/*.bin
 
       - name: Publish release (tags only)

@@ -174,8 +174,20 @@ void listMove(ListView& lv, int n, int delta) {
 }
 
 int listHit(ListView& lv, int n, int x, int y) {
-  (void)x;
-  if (y < lv.y0) return -1;
+  int h = lv.rows * lv.rowH;
+  if (y < lv.y0 || y >= lv.y0 + h) return -1;
+  // Tap in the scrollbar lane: jump the list so this point maps to that spot in it, bottom
+  // of the bar = bottom of the list. It scrolls, it does not pick a row. Returns -1.
+  if (n > lv.rows && x >= W - 14) {
+    int maxTop = n - lv.rows;
+    int top = (y - lv.y0) * maxTop / (h - 1);
+    if (top < 0) top = 0;
+    if (top > maxTop) top = maxTop;
+    lv.top = top;
+    lv.sel = top;
+    listDraw(lv, n, true);
+    return -1;
+  }
   int r = (y - lv.y0) / lv.rowH;
   if (r >= lv.rows) return -1;
   int i = lv.top + r;
