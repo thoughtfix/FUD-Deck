@@ -185,16 +185,16 @@ void listMove(ListView& lv, int n, int delta) {
 int listHit(ListView& lv, int n, int x, int y) {
   int h = lv.rows * lv.rowH;
   if (y < lv.y0 || y >= lv.y0 + h) return -1;
-  // Tap in the scrollbar rail: jump the list so this point maps to that spot in it, bottom
-  // of the bar = bottom of the list. It scrolls, it does not pick a row. Returns -1.
+  // Tap in the scrollbar rail: page the list, up or down. This LCD can't do a precise drag
+  // or a pixel-accurate jump, so a tap below the thumb pages down and a tap above it pages up.
+  // It scrolls, it does not pick a row. Returns -1.
   if (n > lv.rows && x >= W - SB_RAIL) {
-    int maxTop = n - lv.rows;
-    int top = (y - lv.y0) * maxTop / (h - 1);
-    if (top < 0) top = 0;
-    if (top > maxTop) top = maxTop;
-    lv.top = top;
-    lv.sel = top;
-    listDraw(lv, n, true);
+    int thumbH = max(18, h * lv.rows / n);
+    int thumbY = lv.y0 + (h - thumbH) * lv.top / (n - lv.rows);
+    int page = lv.rows - 1 > 0 ? lv.rows - 1 : 1;
+    int s = lv.sel + (y < thumbY + thumbH / 2 ? -page : page);
+    lv.sel = s < 0 ? 0 : s >= n ? n - 1 : s;
+    listDraw(lv, n, false);
     return -1;
   }
   int r = (y - lv.y0) / lv.rowH;
