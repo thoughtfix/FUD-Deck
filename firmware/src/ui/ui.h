@@ -4,7 +4,7 @@
 #include "../board/input.h"
 
 enum class ScreenId : uint8_t {
-  Home, Menu, Log, Bundle, Item, Attack, Groups, Toys, ToyStub, Waterfall, Traffic, SsidScan, SsidDetail, IrDecode, TvbGone, Finder, FinderLock, Settings, SetClock, PostReport, About, TouchCal, ButtonTest, COUNT
+  Home, Menu, Log, Bundle, Item, Attack, Groups, Toys, ToyStub, Waterfall, Traffic, SsidScan, SsidDetail, IrDecode, TvbGone, Finder, FinderLock, Settings, SetClock, PostReport, About, TouchCal, ButtonTest, Pin, Prank, PrankHit, COUNT
 };
 
 struct Screen {

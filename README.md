@@ -147,7 +147,7 @@ the port with yours):
 2. Write the full image:
 
    ```
-   esptool --chip esp32s3 --port /dev/cu.usbmodem1101 write-flash 0x0 fud-deck-div2-v0.5b.bin
+   esptool --chip esp32s3 --port /dev/cu.usbmodem1101 write-flash 0x0 fud-deck-div2-v0.6b.bin
    ```
 
 If it will not connect, hold BOOT, tap RESET, release BOOT, and try again. To go back to

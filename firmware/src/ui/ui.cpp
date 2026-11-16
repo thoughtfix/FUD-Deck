@@ -31,6 +31,7 @@ static bool quiet(ScreenId s) {
   switch (s) {
     case ScreenId::Settings: case ScreenId::SetClock: case ScreenId::PostReport: case ScreenId::About:
     case ScreenId::TouchCal: case ScreenId::ButtonTest:
+    case ScreenId::Pin: case ScreenId::Prank: case ScreenId::PrankHit:
     case ScreenId::Waterfall: case ScreenId::Traffic: case ScreenId::TvbGone: case ScreenId::IrDecode:
     case ScreenId::Log: case ScreenId::Bundle: case ScreenId::Item:
       return true;
